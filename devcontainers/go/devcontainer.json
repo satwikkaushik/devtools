@@ -1,0 +1,123 @@
+// Hardened Go dev container (tuned for rootless Podman, works with Docker too).
+// Format reference: https://aka.ms/devcontainer.json
+// Base template:    https://github.com/devcontainers/templates/tree/main/src/go
+//
+// Design goal: shrink the attack surface of the container while keeping the
+// everyday Go workflow (gopls, golangci-lint, delve debugging, go test/build) working.
+// Every hardening choice below says what it protects against and what it costs.
+{
+	"name": "Go Hardened",
+
+	// SUPPLY CHAIN: tags are mutable. For a reproducible, tamper-evident base,
+	// pin to a digest once you have verified the image, e.g.
+	//   "mcr.microsoft.com/devcontainers/go:2-1.27-trixie@sha256:<digest>"
+	// Get the digest with: podman image inspect --format '{{.Digest}}' <image>
+	// (Check the tag exists at https://mcr.microsoft.com/en-us/artifact/mar/devcontainers/go/tags)
+	"image": "mcr.microsoft.com/devcontainers/go:2-1.27-trixie",
+
+	// PRIVILEGE: run the whole container (not just VS Code's session) as the
+	// unprivileged "vscode" user instead of root.
+	"containerUser": "vscode",
+	"remoteUser": "vscode",
+
+	// Reap zombie processes properly (tini). Harmless and avoids PID leaks from
+	// language servers / test runners.
+	"init": true,
+
+	// NOTE: golangci-lint, gopls, delve and staticcheck already ship in this base
+	// image, so the separate golangci-lint feature is not required
+	// third-party artifact pulled at build time. Add features here only if needed,
+	// and pin their versions.
+	"features": {},
+
+	"runArgs": [
+		// Rootless Podman: map your host UID to the same UID inside the container so
+		// files in the bind-mounted workspace are owned by you, with no root needed.
+		// (Docker users: delete this line.)
+		"--userns=keep-id",
+
+		// Block privilege escalation via setuid binaries / file capabilities.
+		// Cost: `sudo` and `ping` will not work inside the container (by design).
+		"--security-opt=no-new-privileges:true",
+
+		// Drop every Linux capability. Normal Go development needs none.
+		// If you ever hit "operation not permitted", add back ONLY the one needed,
+		// e.g. "--cap-add=SYS_PTRACE" if delve cannot attach to a process.
+		// also when you want to use vs code debugger and breakpoints
+		"--cap-drop=ALL",
+
+		// Limit fork bombs / runaway processes. Go's test runner and the linter
+		// are thread-heavy, so keep this generous.
+		"--pids-limit=4096"
+
+		// Optional resource caps (uncomment and tune to your machine):
+		// ,"--memory=8g"
+		// ,"--cpus=4"
+
+		// Optional, strongest isolation, but blocks `go mod download` and the
+		// Go proxy, so only use with a pre-populated module cache / vendor dir:
+		// ,"--network=none"
+	],
+
+	// SELinux hosts (Fedora, RHEL, ...): if the workspace shows "permission denied",
+	// prefer relabelling just this mount (keeps SELinux confinement on) over
+	// disabling SELinux for the container with --security-opt=label=disable.
+	// "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,relabel=private",
+	// "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+	// Persist the Go module cache across container rebuilds (fast `go mod download`).
+	// The volume name includes ${devcontainerId} so each project gets its OWN cache.
+	// A shared cache would let a poisoned module in one project leak into all others.
+	// Trade-off: modules are downloaded once per project instead of once globally.
+	// Never mount the container-engine socket (podman.sock / docker.sock) here:
+	// that would hand the container full control of your host.
+	"mounts": [
+		"source=go-mod-cache-${devcontainerId},target=/go/pkg/mod,type=volume"
+	],
+
+	"containerEnv": {
+		// Never auto-download a different Go toolchain than the one baked into the
+		// image (the go.mod "toolchain" line could otherwise pull arbitrary
+		// binaries). To use another Go version, change the image tag instead.
+		"GOTOOLCHAIN": "local"
+
+		// Private modules? Keep them off the public proxy and checksum DB:
+		// ,"GOPRIVATE": "github.com/your-org/*"
+	},
+
+	// Ports are NOT forwarded by default. When you need one, forward it
+	// explicitly; Dev Containers binds forwarded ports to localhost only.
+	// "forwardPorts": [8080],
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go"
+			],
+			"settings": {
+				// Lint the package on save with the golangci-lint preinstalled in the image.
+				// golangci-lint v2 needs the "-v2" tool name; use "golangci-lint" for v1.
+				"go.lintTool": "golangci-lint-v2",
+				"go.lintOnSave": "package",
+
+				// Tools are baked into the image. Stop the Go extension from
+				// fetching/updating binaries (`go install ...@latest`) at runtime.
+				"go.toolsManagement.autoUpdate": false,
+				"go.toolsManagement.checkForUpdates": "off"
+			}
+		}
+	},
+
+	// Quick sanity check that the toolchain is intact after the container is created.
+	"postCreateCommand": "go version && golangci-lint --version"
+}
+
+// ---------------------------------------------------------------------------
+// HOST-SIDE HARDENING (cannot be set in this file; configure in VS Code USER settings)
+// ---------------------------------------------------------------------------
+// The Dev Containers extension forwards your SSH agent and git credentials into
+// the container by default. Anything running in the container (including a
+// malicious dependency's test/init code) can then use them.
+//   - Prefer scoped, short-lived credentials (deploy keys, fine-grained PATs).
+//   - Consider setting "dev.containers.gitCredentialHelperConfigLocation": "none"
+//     and avoid ssh-add'ing keys you do not need while working in the container.
