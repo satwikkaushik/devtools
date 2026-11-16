@@ -1,0 +1,12 @@
+[alias]
+    # Deletes a local branch safely after updating main.
+    # e.g: git cleanup feature/logger
+    cleanup = "!f() { git switch main && git pull --ff-only && git fetch --prune && git branch -d \"$1\"; }; f"
+
+    # Displays the last 10 commits in a compact, one-line format.
+    # e.g: git l10
+    l10 = "log --oneline -10"
+
+    # Displays the last 5 commits in a compact, one-line format.
+    # e.g: git l5
+    l5 = "log --oneline -5"

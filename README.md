@@ -14,6 +14,7 @@ A collection of opinionated, security-conscious developer configurations that I 
 | Path | Description |
 | --- | --- |
 | [`devcontainers/go`](devcontainers/go) | Hardened Go dev container, tuned for rootless Podman (Docker works too). |
+| [`git`](git) | Small set of useful Git aliases for cleanup and quick history views. |
 
 More coming over time.
 
